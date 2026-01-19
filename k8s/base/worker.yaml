@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: urlshortener
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: worker
+        image: urlshortener-worker:latest  # Build and push your image
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_PASSWORD
+        - name: WORKER_CONCURRENCY
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: WORKER_CONCURRENCY
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pgrep -f worker
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+# KEDA ScaledObject for queue-based autoscaling
+# KEDA will be automatically installed by deploy.sh if not present
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-scaler
+  namespace: urlshortener
+spec:
+  scaleTargetRef:
+    name: worker
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 5  # Check queue every 5 seconds (default is 30s)
+  cooldownPeriod: 0  # No cooldown - scale down immediately when queue is low
+  # Fast scaling behavior for job queues
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0  # Scale up immediately
+          policies:
+          - type: Pods
+            value: 4
+            periodSeconds: 15  # Can add 4 pods every 15 seconds
+          - type: Percent
+            value: 100
+            periodSeconds: 15  # Or double the pods every 15 seconds
+          selectPolicy: Max  # Use the more aggressive policy
+        scaleDown:
+          stabilizationWindowSeconds: 0  # Scale down immediately when queue is low
+          policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 15  # Can remove 2 pods every 15 seconds
+          - type: Percent
+            value: 50
+            periodSeconds: 15  # Or remove 50% every 15 seconds
+          selectPolicy: Min  # Use the more conservative policy for scale down
+  triggers:
+  - type: redis
+    metadata:
+      address: redis-service.urlshortener.svc.cluster.local:6379
+      listName: job_queue
+      listLength: "5"  # Scale up when queue has 5+ items per replica
+    authenticationRef:
+      name: redis-auth
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis-auth
+  namespace: urlshortener
+spec:
+  secretTargetRef:
+  - parameter: password
+    name: app-secrets
+    key: REDIS_PASSWORD

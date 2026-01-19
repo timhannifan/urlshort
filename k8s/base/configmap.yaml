@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: urlshortener
+data:
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "urlshortener"
+  API_PORT: "8080"
+  WORKER_CONCURRENCY: "5"
+  BASE_URL: "http://localhost:8080"
