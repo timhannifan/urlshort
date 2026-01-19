@@ -4,14 +4,13 @@ A production-ready URL shortening service built with FastAPI, featuring backgrou
 
 ## Features
 
-- **URL Shortening**: Create short URLs with optional custom codes
-- **Background Job Processing**: Asynchronous processing of QR code generation, screenshots, and metadata extraction
-- **Redis Caching**: Fast URL lookups with Redis caching layer
-- **PostgreSQL Persistence**: Reliable data storage with click tracking
-- **Kubernetes Deployment**: Full Kubernetes manifests with autoscaling via KEDA
-- **Monitoring**: Prometheus metrics and Grafana dashboards
-- **Health Checks**: Liveness and readiness probes for reliable deployments
-- **Analytics**: Track URL creation and click events
+- **Microservices Architecture**: Separate API and worker services with clear separation of concerns
+- **Event-Driven Processing**: Asynchronous job queue with Redis for background task processing
+- **Auto-Scaling**: KEDA-based queue-driven autoscaling that scales workers based on queue depth
+- **Production-Ready Infrastructure**: Full Kubernetes deployment with health checks, resource limits, and service discovery
+- **Observability**: Prometheus metrics and Grafana dashboards for monitoring and alerting
+- **High Availability**: Multi-replica deployments with database persistence and Redis caching
+- **Cloud-Native**: Containerized services with Kubernetes-native configuration and deployment
 
 ## Architecture
 
@@ -74,7 +73,17 @@ minikube start
 kubectl cluster-info
 ```
 
-### 1. Build Docker Images
+### 1. Create Secrets
+
+```bash
+# Copy the secrets template and fill in your values
+cp k8s/base/secrets.yaml.template k8s/base/secrets.yaml
+
+# Edit secrets.yaml and replace the placeholders with base64-encoded values
+# To encode: echo -n 'yourvalue' | base64
+```
+
+### 2. Build Docker Images
 
 ```bash
 # Make scripts executable (first time only)
@@ -84,7 +93,7 @@ chmod +x scripts/*.sh
 ./scripts/build.sh
 ```
 
-### 2. Deploy to Kubernetes
+### 3. Deploy to Kubernetes
 
 ```bash
 # Deploy all components
@@ -99,14 +108,14 @@ This script will:
 - Install KEDA (if not already installed)
 - Set up port forwarding
 
-### 3. Access the Services
+### 4. Access the Services
 
 After deployment, services are available at:
 - **API**: http://localhost:8080
 - **Prometheus**: http://localhost:9090
 - **Grafana**: http://localhost:3000 (admin/admin)
 
-### 4. Test the API
+### 5. Test the API
 
 ```bash
 # Create a short URL
@@ -149,70 +158,8 @@ urlshortener/
 │   ├── verify.sh         # Verify deployment
 │   ├── test-autoscaling.sh # Test autoscaling
 │   └── watch-autoscaling.sh # Watch autoscaling
-├── deploy-guide.md        # Detailed deployment guide
 └── README.md             # This file
 ```
-
-## API Endpoints
-
-### `POST /shorten`
-Create a shortened URL.
-
-**Request:**
-```json
-{
-  "url": "https://example.com",
-  "custom_code": "optional-custom-code"
-}
-```
-
-**Response:**
-```json
-{
-  "short_url": "http://localhost:8080/abc123",
-  "original_url": "https://example.com",
-  "short_code": "abc123"
-}
-```
-
-### `GET /{short_code}`
-Redirect to the original URL.
-
-**Response:**
-```json
-{
-  "redirect_url": "https://example.com"
-}
-```
-
-### `GET /stats/{short_code}`
-Get statistics for a shortened URL.
-
-**Response:**
-```json
-{
-  "short_code": "abc123",
-  "original_url": "https://example.com",
-  "clicks": 42,
-  "created_at": "2024-01-01T00:00:00",
-  "jobs": [
-    {
-      "type": "qr_code",
-      "status": "completed",
-      "result": {...}
-    }
-  ]
-}
-```
-
-### `GET /health`
-Health check endpoint.
-
-### `GET /ready`
-Readiness check endpoint (verifies database and Redis connectivity).
-
-### `GET /metrics`
-Prometheus metrics endpoint.
 
 ## Monitoring
 
@@ -256,84 +203,6 @@ To test autoscaling:
 ./scripts/watch-autoscaling.sh
 ```
 
-## Development
-
-### Local Development
-
-1. **Set up environment variables:**
-   ```bash
-   export REDIS_HOST=localhost
-   export REDIS_PORT=6379
-   export POSTGRES_HOST=localhost
-   export POSTGRES_PORT=5432
-   export POSTGRES_DB=urlshortener
-   export POSTGRES_USER=urlshort
-   export POSTGRES_PASSWORD=password123
-   export BASE_URL=http://localhost:8080
-   ```
-
-2. **Start dependencies:**
-   ```bash
-   # Start PostgreSQL and Redis (using Docker)
-   docker run -d --name postgres -e POSTGRES_DB=urlshortener -e POSTGRES_USER=urlshort -e POSTGRES_PASSWORD=password123 -p 5432:5432 postgres:15
-   docker run -d --name redis -p 6379:6379 redis:7-alpine
-   ```
-
-3. **Run the API:**
-   ```bash
-   cd api
-   uv run python main.py
-   ```
-
-4. **Run the worker:**
-   ```bash
-   cd worker
-   uv run python worker.py
-   ```
-
-### Building Images
-
-```bash
-# Build API image
-cd api
-docker build -t urlshortener-api:latest .
-
-# Build Worker image
-cd ../worker
-docker build -t urlshortener-worker:latest .
-```
-
-## Deployment
-
-See [deploy-guide.md](./deploy-guide.md) for detailed deployment instructions.
-
-### Quick Deploy
-
-```bash
-# Build and deploy
-./scripts/build.sh
-./scripts/deploy.sh
-```
-
-### Manual Deploy
-
-```bash
-# Apply manifests in order
-kubectl apply -f k8s/base/namespace.yaml
-kubectl apply -f k8s/base/secrets.yaml
-kubectl apply -f k8s/base/configmap.yaml
-kubectl apply -f k8s/base/postgres.yaml
-kubectl apply -f k8s/base/redis.yaml
-
-# Wait for databases
-kubectl wait --for=condition=ready pod -l app=postgres -n urlshortener --timeout=120s
-kubectl wait --for=condition=ready pod -l app=redis -n urlshortener --timeout=120s
-
-# Deploy application
-kubectl apply -f k8s/base/api.yaml
-kubectl apply -f k8s/base/worker.yaml
-kubectl apply -f k8s/base/monitoring.yaml
-```
 
 ## Stopping Services
 
@@ -343,69 +212,6 @@ kubectl apply -f k8s/base/monitoring.yaml
 
 # Delete namespace (removes everything)
 kubectl delete namespace urlshortener
-```
-
-## Troubleshooting
-
-### kubectl can't connect to Kubernetes API server?
-
-If you see an error like `failed to download openapi: Get "http://localhost:8080/openapi/v2?timeout=32s": dial tcp [::1]:8080: connect: connection refused`, this means kubectl can't reach your Kubernetes cluster.
-
-**For Docker Desktop:**
-1. Ensure Kubernetes is enabled and running:
-   - Open Docker Desktop
-   - Go to Settings → Kubernetes
-   - Make sure "Enable Kubernetes" is checked
-   - Wait for Kubernetes to start (the status should show "Running")
-
-2. Verify kubectl can connect:
-   ```bash
-   kubectl cluster-info
-   kubectl get nodes
-   ```
-
-3. Check your kubectl context:
-   ```bash
-   kubectl config current-context
-   # Should show something like "docker-desktop" or "docker-for-desktop"
-   ```
-
-4. If context is wrong, switch to Docker Desktop context:
-   ```bash
-   kubectl config use-context docker-desktop
-   # or
-   kubectl config use-context docker-for-desktop
-   ```
-
-**For Minikube:**
-```bash
-# Check if minikube is running
-minikube status
-
-# If not running, start it
-minikube start
-
-# Make sure kubectl is using minikube context
-kubectl config use-context minikube
-```
-
-### Pods not starting?
-```bash
-kubectl describe pod -n urlshortener <pod-name>
-kubectl logs -n urlshortener <pod-name>
-```
-
-### Can't connect to services?
-```bash
-kubectl get svc -n urlshortener
-kubectl get endpoints -n urlshortener
-```
-
-### Images not found?
-If using Minikube, ensure you're using minikube's Docker daemon:
-```bash
-eval $(minikube docker-env)
-./scripts/build.sh
 ```
 
 ## Next Steps
@@ -423,8 +229,4 @@ eval $(minikube docker-env)
 
 ## License
 
-[Add your license here]
-
-## Contributing
-
-[Add contributing guidelines here]
+BSD 3-Clause License. See [LICENSE](LICENSE) for details.
